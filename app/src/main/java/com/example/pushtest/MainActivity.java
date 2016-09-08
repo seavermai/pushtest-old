@@ -1,114 +1,75 @@
 package com.example.pushtest;
 
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.support.v4.content.LocalBroadcastManager;
+import android.content.SharedPreferences;
+import android.support.annotation.Nullable;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.util.Log;
+import android.view.View;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.TextView;
 import android.widget.Toast;
 
-import com.google.android.gms.common.ConnectionResult;
-import com.google.android.gms.common.GoogleApiAvailability;
-import com.kii.cloud.storage.*;
+import com.google.firebase.messaging.FirebaseMessaging;
+import com.kii.cloud.storage.Kii;
+import com.kii.cloud.storage.KiiUser;
+import com.kii.cloud.storage.callback.KiiPushCallBack;
 import com.kii.cloud.storage.callback.KiiUserCallBack;
-import com.kii.cloud.storage.utils.Log;
 
 public class MainActivity extends AppCompatActivity {
-
-    private static final int PLAY_SERVICES_RESOLUTION_REQUEST = 9000;
-
-    private BroadcastReceiver mRegistrationBroadcastReceiver;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        Kii.initialize(this.getApplicationContext(), Config.APP_ID, Config.APP_KEY, Config.APP_SITE);
 
-        // Initialize and Connect to Kii Cloud
-        Kii.initialize(getApplicationContext(), "85558be6", "feb3c55b9d5ded59b20c58bef8091bc3", Kii.Site.US);
-
-        // Test Code: adding a user account
-//        String username = "user1";
-//        String password = "123456";
-//        KiiUser.Builder builder = KiiUser.builderWithName(username);
-//        KiiUser user = builder.build();
-//        user.register(new KiiUserCallBack() {
-//            @Override
-//            public void onRegisterCompleted(int token, KiiUser user, Exception exception) {
-//                if (exception != null) {
-//                    // Error handling
-//                    Toast.makeText(MainActivity.this, "Error register user:" + exception.getMessage(), Toast.LENGTH_LONG).show();
-//                    return;
-//                }
-//                Toast.makeText(MainActivity.this, "Succeeded", Toast.LENGTH_LONG).show();
-//            }
-//        }, password);
-
-        // Check for Google Play Services
-        if (!checkPlayServices()) {
-            Toast.makeText(MainActivity.this, "This application needs Google Play services", Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        // Initialization Preparation
-        String username = "user1";
-        String password = "123456";
-        KiiUser.logIn(new KiiUserCallBack() {
+        Button loginButton = (Button) findViewById(R.id.loginButton);
+        final TextView messageText = (TextView) findViewById(R.id.messageText);
+        loginButton.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onLoginCompleted(int token, KiiUser user, Exception exception) {
-                if (exception != null) {
-                    Toast.makeText(MainActivity.this, "Error login user:" + exception.getMessage(), Toast.LENGTH_LONG).show();
-                    return;
-                }
-                Toast.makeText(MainActivity.this, "Succeeded to login", Toast.LENGTH_LONG).show();
-                Intent intent = new Intent(MainActivity.this, RegistrationIntentService.class);
-                startService(intent);
+            public void onClick(View view) {
+                messageText.setText("Login to Kii Cloud...");
+                EditText nameEdit = (EditText) findViewById(R.id.loginNameEditText);
+                EditText passwordEdit = (EditText) findViewById(R.id.passwordEditText);
+                String name = nameEdit.getText().toString();
+                String password = passwordEdit.getText().toString();
+
+                KiiUser.logIn(new KiiUserCallBack() {
+                    @Override
+                    public void onLoginCompleted(int token, @Nullable KiiUser user, @Nullable final Exception exception) {
+                        if (exception != null) {
+                            String message = "Failed to login.";
+                            Toast.makeText(MainActivity.this.getApplicationContext(), message, Toast.LENGTH_LONG).show();
+                            messageText.setText(message);
+                            return;
+                        }
+                        messageText.setText("Login Succeeded!");
+
+                        // In case token is published when no user sign up/in to KiiCloud.
+                        // Or different user is signed up/in to Kii Cloud.
+                        SharedPreferences spf = getSharedPreferences("FCM", 0);
+                        String fcmToken  = spf.getString("FCMToken", "");
+                        if (fcmToken != "") {
+                            messageText.setText("Installing Push...");
+                            KiiUser.pushInstallation().install(fcmToken, new KiiPushCallBack() {
+                                @Override
+                                public void onInstallCompleted(int taskId, @Nullable Exception e) {
+                                    if (exception != null) {
+                                        String message = "Failed to install token to Kii Cloud.";
+                                        Toast.makeText(MainActivity.this.getApplicationContext(), message, Toast.LENGTH_LONG).show();
+                                        messageText.setText(message);
+                                        return;
+                                    }
+                                    messageText.setText("Firebase token installation succeeded!");
+                                }
+                            });
+                        }
+                    }
+                }, name, password);
             }
-        }, username, password);
-
-        // Initialization Termination Handler
-        mRegistrationBroadcastReceiver = new BroadcastReceiver() {
-            @Override
-            public void onReceive(Context context, Intent intent) {
-                String errorMessage = intent.getStringExtra(RegistrationIntentService.PARAM_ERROR_MESSAGE);
-                Log.e("GCMTest", "Registration completed:" + errorMessage);
-                if (errorMessage != null) {
-                    Toast.makeText(MainActivity.this, "Error push registration:" + errorMessage, Toast.LENGTH_LONG).show();
-                } else {
-                    Toast.makeText(MainActivity.this, "Succeeded push registration", Toast.LENGTH_LONG).show();
-                }
-            }
-        };
+        });
     }
 
-    @Override
-    protected void onResume() {
-        super.onResume();
-        LocalBroadcastManager.getInstance(this).registerReceiver(mRegistrationBroadcastReceiver,
-                new IntentFilter(RegistrationIntentService.INTENT_PUSH_REGISTRATION_COMPLETED));
-    }
-
-    @Override
-    protected void onPause() {
-        LocalBroadcastManager.getInstance(this).unregisterReceiver(mRegistrationBroadcastReceiver);
-        super.onPause();
-    }
-
-    private boolean checkPlayServices() {
-        GoogleApiAvailability apiAvailability = GoogleApiAvailability.getInstance();
-        int resultCode = apiAvailability.isGooglePlayServicesAvailable(this);
-        if (resultCode != ConnectionResult.SUCCESS) {
-            if (apiAvailability.isUserResolvableError(resultCode)) {
-                apiAvailability.getErrorDialog(this, resultCode, PLAY_SERVICES_RESOLUTION_REQUEST)
-                        .show();
-            } else {
-                Log.i("PushTest", "This device is not supported.");
-                finish();
-            }
-            return false;
-        }
-        return true;
-    }
 }
